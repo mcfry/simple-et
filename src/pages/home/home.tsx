@@ -1,18 +1,23 @@
 // External
-import { useState, useRef } from 'react'
-import { Input } from '@material-tailwind/react'
-import { Select, Option } from '@material-tailwind/react'
-import { Button } from '@material-tailwind/react'
+import { useNavigate } from 'react-router-dom'
+import { useState, useRef, useEffect } from 'react'
+import { Input, Select, Option, Button } from '@material-tailwind/react'
 import { IoMdInformationCircleOutline } from 'react-icons/io'
 import { TbAnalyze, TbCheck, TbPlus, TbMinus } from 'react-icons/tb'
 import clsx from 'clsx'
 import { z } from 'zod'
 
 // Internal
+import ValidationErrors from '../../components/ValidationErrors'
 import simpleNotification from '../../../public/simple-notification.mp3'
 
 // Validations
-const Exercise = z.string().min(4)
+const Exercise = z.object({
+  id: z.number(),
+  name: z.string().min(4),
+  setRecords: z.array(z.any()),
+})
+const ExerciseToAdd = z.string().min(4)
 const Nos = z.union([z.nan(), z.number().gte(1).lte(30)])
 
 // Schema
@@ -29,14 +34,18 @@ const TimerState = z.object({
   ]),
 })
 type Exercise = z.infer<typeof Exercise>
+type ExerciseToAdd = z.infer<typeof ExerciseToAdd>
 type Nos = z.infer<typeof Nos>
 type TimerState = z.infer<typeof TimerState>
 
 function Home() {
+  const navigate = useNavigate()
+
   // ---------
   // - State -
   // ---------
-  const [exercise, setExercise] = useState<Exercise>('')
+  const [exercises, setExercises] = useState<Exercise[]>([])
+  const [exercise, setExercise] = useState<Exercise>()
   const [numberOfSets, setNumberOfSets] = useState<Nos | ''>(1) // allow empty string so user can backspace
   const [restGoal, setRestGoal] = useState<string>('90s')
   const [exerciseErrors, setExerciseErrors] = useState<string[]>([''])
@@ -50,7 +59,7 @@ function Home() {
   })
 
   const [isAddingExercise, setIsAddingExercise] = useState<boolean>(false)
-  const [exerciseToAdd, setExerciseToAdd] = useState<Exercise>('')
+  const [exerciseToAdd, setExerciseToAdd] = useState<ExerciseToAdd>('')
   const [exerciseToAddErrors, setExerciseToAddErrors] = useState<string[]>([''])
 
   // --------
@@ -77,16 +86,44 @@ function Home() {
     }
   }
 
-  // const checkAndSetExercise = (val: string) => {
-  //   const exerciseResults = Exercise.safeParse(val)
-  //   if (!exerciseResults.success) {
-  //     const errors = exerciseResults.error.format()
-  //     setExerciseErrors(errors._errors)
-  //   } else {
-  //     setExerciseErrors([''])
-  //     setExercise(val)
-  //   }
-  // }
+  const createSetRecordFromState = () => {
+    const sets = []
+    if (numberOfSets !== '') {
+      for (let i = 0; i < numberOfSets; i += 1) {
+        let time =
+          i === numberOfSets - 1 ? timerState.timer : timerState.setDurations[i]
+        let timeAfter =
+          i < timerState.restDurations.length ? timerState.restDurations[i] : 0
+
+        const setObj = {
+          Time: time,
+          TimeAfter: timeAfter,
+          SetNumber: i + 1,
+        }
+        sets.push(setObj)
+      }
+    }
+
+    return {
+      ExerciseId: exercise?.id,
+      Sets: sets,
+    }
+  }
+
+  const findExerciseByName = (name: string) => {
+    return exercises.filter(exer => exer.name === name)[0]
+  }
+
+  // -------------
+  // - Lifecycle -
+  // -------------
+  useEffect(() => {
+    fetch(import.meta.env.VITE_DB_URL + '/Exercise')
+      .then(res => res.json())
+      .then((data: { id: number; name: string; setRecords: string[] }[]) => {
+        setExercises(data)
+      })
+  }, [])
 
   // ------------
   // - Handlers -
@@ -100,7 +137,7 @@ function Home() {
       const val = parseInt(e.currentTarget.value)
       checkAndSetNos(val)
     } else if (type === 'exercise' && manualValue) {
-      setExercise(manualValue)
+      setExercise(findExerciseByName(manualValue))
     } else if (type === 'restGoal' && manualValue) {
       setRestGoal(manualValue)
     } else if (type === 'toAdd' && e) {
@@ -108,13 +145,25 @@ function Home() {
     }
   }
 
-  const createSecondsTimer = () =>
-    setInterval(() => {
-      setTimerState(state => ({
-        ...state,
-        timer: state.timer + 1,
-      }))
+  const createSecondsTimer = () => {
+    const convertedRestGoal = parseInt(restGoal.slice(0, restGoal.length - 1))
+
+    return setInterval(() => {
+      setTimerState(state => {
+        if (
+          state.timer + 1 === convertedRestGoal &&
+          state.buttonText === 'End Rest and Start Set'
+        ) {
+          audioRef.current?.play()
+        }
+
+        return {
+          ...state,
+          timer: state.timer + 1,
+        }
+      })
     }, 1000)
+  }
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
@@ -143,7 +192,25 @@ function Home() {
           newTimerState.buttonText = 'End Set and Start Rest'
         }
       } else if (timerState.buttonText === 'End Last Set') {
-        // database stuff, route to new page
+        const SetRecord = createSetRecordFromState()
+
+        fetch(import.meta.env.VITE_DB_URL + '/SetRecord', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(SetRecord),
+        })
+          .then(res => {
+            if (res.ok) {
+              return res.json()
+            }
+          })
+          .then(data => {
+            if (data) {
+              navigate(`/results/${data?.Id}?exerciseId=${data.ExerciseId}`)
+            }
+          })
       }
 
       setNosErrors([''])
@@ -169,19 +236,41 @@ function Home() {
 
   const handleAddClick = () => {
     setIsAddingExercise(prev => !prev)
-    //audioRef.current?.play()
   }
 
   const handleAddSubmitClick = () => {
-    const exerciseResults = Exercise.safeParse(exerciseToAdd)
+    const exerciseResults = ExerciseToAdd.safeParse(exerciseToAdd)
     if (!exerciseResults.success) {
       const errors = exerciseResults.error.format()
       setExerciseToAddErrors(errors._errors)
     } else {
-      setExerciseToAddErrors([''])
-      setIsAddingExercise(false)
-      // submit exercise to db, then set it as selected
       // display alert
+      fetch(import.meta.env.VITE_DB_URL + '/Exercise', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json', // Set the content type to JSON
+        },
+        body: JSON.stringify({
+          name: exerciseToAdd,
+        }),
+      })
+        .then(res => {
+          if (res.ok) {
+            return res.json()
+          }
+        })
+        .then(data => {
+          if (data) {
+            setExercises(prev => [...prev, data])
+            setExercise(data)
+            setExerciseToAddErrors([''])
+            setIsAddingExercise(false)
+            setExerciseToAdd('')
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err)
+        })
     }
   }
 
@@ -190,10 +279,11 @@ function Home() {
       <audio ref={audioRef}>
         <source src={simpleNotification} type="audio/mp3" />
       </audio>
+
       <div className="card w-[30rem] bg-white text-black shadow-xl p-8 pb-10 rounded-md">
         <div className="flex flex-col items-center space-y-8">
           <span className="w-full text-center text-4xl font-bold">
-            {isExerciseStarted() ? 'Settings' : exercise}
+            {isExerciseStarted() ? 'Settings' : exercise?.name}
           </span>
 
           {isExerciseStarted() ? (
@@ -204,14 +294,16 @@ function Home() {
                     <Select
                       color="orange"
                       label="Select Exercise"
-                      value={exercise}
+                      value={exercise?.name}
+                      selected={() => exercise?.name}
+                      disabled={isAddingExercise}
                       onChange={val => handleChange(undefined, val, 'exercise')}
                     >
-                      <Option value={'Push Ups'}>Push Ups</Option>
-                      <Option value={'Pull Ups'}>Pull Ups</Option>
-                      <Option value={'Dips'}>Dips</Option>
-                      <Option value={'Plank'}>Plank</Option>
-                      <Option value={'Handstands'}>Handstand</Option>
+                      {exercises.map(exer => (
+                        <Option key={exer.id} value={exer.name}>
+                          {exer.name}
+                        </Option>
+                      ))}
                     </Select>
 
                     <Button
@@ -227,15 +319,7 @@ function Home() {
                   </div>
                 </div>
 
-                {exerciseErrors && exerciseErrors[0] != '' && (
-                  <span className="text-red-500 ml-2 font-semibold">
-                    <ul>
-                      {exerciseErrors.map((ee, index) => (
-                        <li key={index}>{ee}</li>
-                      ))}
-                    </ul>
-                  </span>
-                )}
+                <ValidationErrors errors={exerciseErrors} />
 
                 {isAddingExercise && (
                   <div className="flex flex-col w-full justify-center">
@@ -260,15 +344,7 @@ function Home() {
                       </Button>
                     </div>
 
-                    {exerciseToAddErrors && exerciseToAddErrors[0] != '' && (
-                      <span className="text-red-500 ml-2 font-semibold">
-                        <ul>
-                          {exerciseToAddErrors.map((ee, index) => (
-                            <li key={index}>{ee}</li>
-                          ))}
-                        </ul>
-                      </span>
-                    )}
+                    <ValidationErrors errors={exerciseToAddErrors} />
                   </div>
                 )}
               </div>
@@ -285,22 +361,14 @@ function Home() {
                   />
                 </div>
 
-                {nosErrors && nosErrors[0] != '' && (
-                  <span className="text-red-500 ml-2 font-semibold">
-                    <ul>
-                      {nosErrors.map((nse, index) => (
-                        <li key={index}>{nse}</li>
-                      ))}
-                    </ul>
-                  </span>
-                )}
+                <ValidationErrors errors={nosErrors} />
               </div>
 
               <div className="flex flex-col items-center justify-center">
                 <div className="w-[22rem]">
                   <Select
                     color="orange"
-                    label="Select Rest Time Goal"
+                    label="Select Rest Time Goal (Sound Alert)"
                     value={restGoal}
                     disabled={isAddingExercise}
                     onChange={val => handleChange(undefined, val, 'restGoal')}

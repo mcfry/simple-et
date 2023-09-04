@@ -10,6 +10,8 @@ function App() {
       <Router>
         <Routes>
           <Route path="/" element={<pages.Home />} />
+          <Route path="/results/:setRecordId" element={<pages.Results />} />
+
           <Route path="*" element={<pages.NotFound />} />
         </Routes>
       </Router>
