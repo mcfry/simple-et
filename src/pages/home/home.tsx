@@ -1,6 +1,6 @@
 // External
 import { useNavigate } from 'react-router-dom'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useContext } from 'react'
 import { Input, Select, Option, Button } from '@material-tailwind/react'
 import { IoMdInformationCircleOutline } from 'react-icons/io'
 import { TbAnalyze, TbCheck, TbPlus, TbMinus } from 'react-icons/tb'
@@ -8,14 +8,16 @@ import clsx from 'clsx'
 import { z } from 'zod'
 
 // Internal
+import { AuthContext } from '../../utils/Auth'
 import ValidationErrors from '../../components/ValidationErrors'
 import simpleNotification from '../../../public/simple-notification.mp3'
 
 // Validations
 const Exercise = z.object({
-  id: z.number(),
-  name: z.string().min(4),
-  setRecords: z.array(z.any()),
+  Id: z.number(),
+  Name: z.string().min(4),
+  SetRecords: z.array(z.any()),
+  UserExercises: z.array(z.any()),
 })
 const ExerciseToAdd = z.string().min(4)
 const Nos = z.union([z.nan(), z.number().gte(1).lte(30)])
@@ -40,12 +42,13 @@ type TimerState = z.infer<typeof TimerState>
 
 function Home() {
   const navigate = useNavigate()
+  const { currentUser } = useContext(AuthContext)
 
   // ---------
   // - State -
   // ---------
   const [exercises, setExercises] = useState<Exercise[]>([])
-  const [exercise, setExercise] = useState<Exercise>()
+  const [exercise, setExercise] = useState<Exercise | null>(null)
   const [numberOfSets, setNumberOfSets] = useState<Nos | ''>(1) // allow empty string so user can backspace
   const [restGoal, setRestGoal] = useState<string>('90s')
   const [exerciseErrors, setExerciseErrors] = useState<string[]>([''])
@@ -65,7 +68,7 @@ function Home() {
   // --------
   // - Refs -
   // --------
-  let secondsInterval = useRef<number>(0)
+  let secondsInterval = useRef<NodeJS.Timeout | null>(null)
   let audioRef = useRef<HTMLAudioElement>(null)
 
   const isExerciseStarted = (): boolean => {
@@ -105,25 +108,65 @@ function Home() {
     }
 
     return {
-      ExerciseId: exercise?.id,
+      Uid: currentUser.uid,
+      ExerciseId: exercise?.Id,
       Sets: sets,
     }
   }
 
   const findExerciseByName = (name: string) => {
-    return exercises.filter(exer => exer.name === name)[0]
+    return exercises.filter(exer => exer.Name === name)[0]
+  }
+
+  const resetState = () => {
+    setExercise(_ => null)
+    setExercises(_ => [])
+    setNumberOfSets(_ => 1)
+    setRestGoal(_ => '90s')
+    setExerciseErrors(_ => [''])
+    setNosErrors(_ => [''])
+    setTimerState(_ => ({
+      set: 1,
+      buttonText: 'Start First Set',
+      timer: 0,
+      setDurations: [],
+      restDurations: [],
+    }))
+    setIsAddingExercise(_ => false)
+    setExerciseToAdd(_ => '')
+    setExerciseToAddErrors(_ => [''])
   }
 
   // -------------
   // - Lifecycle -
   // -------------
   useEffect(() => {
-    fetch(import.meta.env.VITE_DB_URL + '/Exercise')
-      .then(res => res.json())
-      .then((data: { id: number; name: string; setRecords: string[] }[]) => {
-        setExercises(data)
+    if (currentUser) {
+      resetState()
+
+      console.log(currentUser)
+      fetch(import.meta.env.VITE_DB_URL + '/Exercise', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentUser.accessToken}`,
+        },
       })
-  }, [])
+        .then(res => {
+          if (res.ok) {
+            return res.json()
+          } else {
+            throw Error('Response not ok.')
+          }
+        })
+        .then(data => {
+          setExercises(data)
+        })
+        .catch(e => {
+          console.error(e)
+        })
+    }
+  }, [currentUser])
 
   // ------------
   // - Handlers -
@@ -167,7 +210,8 @@ function Home() {
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
-    clearInterval(secondsInterval.current)
+    if (secondsInterval.current) clearInterval(secondsInterval.current)
+    if (!currentUser) return
 
     const exerciseResults = Exercise.safeParse(exercise)
     const nosResults = Nos.safeParse(numberOfSets)
@@ -198,18 +242,24 @@ function Home() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentUser.accessToken}`,
           },
           body: JSON.stringify(SetRecord),
         })
           .then(res => {
             if (res.ok) {
               return res.json()
+            } else {
+              throw Error('Response not ok.')
             }
           })
           .then(data => {
             if (data) {
               navigate(`/results/${data?.Id}?exerciseId=${data.ExerciseId}`)
             }
+          })
+          .catch(e => {
+            console.error(e)
           })
       }
 
@@ -239,6 +289,8 @@ function Home() {
   }
 
   const handleAddSubmitClick = () => {
+    if (!currentUser) return
+
     const exerciseResults = ExerciseToAdd.safeParse(exerciseToAdd)
     if (!exerciseResults.success) {
       const errors = exerciseResults.error.format()
@@ -248,7 +300,8 @@ function Home() {
       fetch(import.meta.env.VITE_DB_URL + '/Exercise', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json', // Set the content type to JSON
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentUser.accessToken}`, // Set the content type to JSON
         },
         body: JSON.stringify({
           name: exerciseToAdd,
@@ -257,6 +310,8 @@ function Home() {
         .then(res => {
           if (res.ok) {
             return res.json()
+          } else {
+            throw Error('Response not ok.')
           }
         })
         .then(data => {
@@ -282,153 +337,165 @@ function Home() {
 
       <div className="card w-[30rem] bg-white text-black shadow-xl p-8 pb-10 rounded-md">
         <div className="flex flex-col items-center space-y-8">
-          <span className="w-full text-center text-4xl font-bold">
-            {isExerciseStarted() ? 'Settings' : exercise?.name}
-          </span>
-
-          {isExerciseStarted() ? (
-            <>
-              <div className="flex flex-col items-center justify-center space-y-2">
-                <div className="flex w-full justify-center">
-                  <div className="flex w-[22rem] space-x-2">
-                    <Select
-                      color="orange"
-                      label="Select Exercise"
-                      value={exercise?.name}
-                      selected={() => exercise?.name}
-                      disabled={isAddingExercise}
-                      onChange={val => handleChange(undefined, val, 'exercise')}
-                    >
-                      {exercises.map(exer => (
-                        <Option key={exer.id} value={exer.name}>
-                          {exer.name}
-                        </Option>
-                      ))}
-                    </Select>
-
-                    <Button
-                      color="orange"
-                      variant="gradient"
-                      className="font-bold text-lg w-16 relative overflow-hidden"
-                      onClick={handleAddClick}
-                    >
-                      <span className="flex items-center">
-                        {isAddingExercise ? <TbMinus /> : <TbPlus />}
-                      </span>
-                    </Button>
-                  </div>
-                </div>
-
-                <ValidationErrors errors={exerciseErrors} />
-
-                {isAddingExercise && (
-                  <div className="flex flex-col w-full justify-center">
-                    <div className="flex w-[22rem] space-x-2">
-                      <Input
-                        type="text"
-                        color="orange"
-                        label="Exercise to Add"
-                        value={exerciseToAdd}
-                        onChange={e => handleChange(e, undefined, 'toAdd')}
-                      />
-
-                      <Button
-                        color="orange"
-                        variant="gradient"
-                        className="font-bold text-lg w-16 relative overflow-hidden"
-                        onClick={handleAddSubmitClick}
-                      >
-                        <span className="flex w-full items-center justify-center">
-                          <TbCheck />
-                        </span>
-                      </Button>
-                    </div>
-
-                    <ValidationErrors errors={exerciseToAddErrors} />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col items-center justify-center">
-                <div className="w-[22rem]">
-                  <Input
-                    type="number"
-                    color="orange"
-                    label="Number of Sets"
-                    value={numberOfSets}
-                    disabled={isAddingExercise}
-                    onChange={e => handleChange(e, undefined, 'nos')}
-                  />
-                </div>
-
-                <ValidationErrors errors={nosErrors} />
-              </div>
-
-              <div className="flex flex-col items-center justify-center">
-                <div className="w-[22rem]">
-                  <Select
-                    color="orange"
-                    label="Select Rest Time Goal (Sound Alert)"
-                    value={restGoal}
-                    disabled={isAddingExercise}
-                    onChange={val => handleChange(undefined, val, 'restGoal')}
-                  >
-                    <Option value={'30s'}>30 seconds</Option>
-                    <Option value={'45s'}>45 seconds</Option>
-                    <Option value={'60s'}>1 minute</Option>
-                    <Option value={'75s'}>1 minute 15s</Option>
-                    <Option value={'90s'}>1 minute 30s</Option>
-                    <Option value={'120s'}>2 minutes</Option>
-                    <Option value={'150s'}>2 minutes 30s</Option>
-                    <Option value={'180s'}>3 minutes</Option>
-                  </Select>
-                </div>
-              </div>
-
-              <div
-                className={clsx(
-                  'flex flex-col items-center justify-center space-y-2',
-                  { 'text-gray-400': isAddingExercise },
-                )}
-              >
-                <p className="w-[22rem]">
-                  <IoMdInformationCircleOutline className="inline-block mb-1 mr-1" />
-                  One button. Press it to start a set, press it again to end a
-                  set and start rest time. Finally, press it whenever to start
-                  the next set. Continue until completion.
-                </p>
-
-                <p className="w-[22rem]">
-                  <TbAnalyze className="inline-block mb-1 mr-1" />
-                  Your set and rest times will be recorded, so you can compare
-                  against previous exercises.
-                </p>
-              </div>
-            </>
+          {!currentUser ? (
+            <span className="w-full text-center text-2xl font-bold">
+              Must login to get started
+            </span>
           ) : (
             <>
-              <div className="flex flex-col items-center justify-center">
-                <span className="text-xl italic font-semibold">
-                  {timerState.buttonText === 'End Rest and Start Set'
-                    ? 'Resting'
-                    : 'Exercising'}
-                </span>
-                <span className="font-semibold">
-                  Set {timerState.set}/{numberOfSets}: {timerState.timer}s
-                </span>
-              </div>
+              <span className="w-full text-center text-4xl font-bold">
+                {isExerciseStarted() ? 'Settings' : exercise?.Name}
+              </span>
+
+              {isExerciseStarted() ? (
+                <>
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    <div className="flex w-full justify-center">
+                      <div className="flex w-[22rem] space-x-2">
+                        <Select
+                          color="orange"
+                          label="Select Exercise"
+                          value={exercise?.Name}
+                          selected={() => exercise?.Name}
+                          disabled={isAddingExercise}
+                          onChange={val =>
+                            handleChange(undefined, val, 'exercise')
+                          }
+                        >
+                          {exercises.map(exer => (
+                            <Option key={exer.Id} value={exer.Name}>
+                              {exer.Name}
+                            </Option>
+                          ))}
+                        </Select>
+
+                        <Button
+                          color="orange"
+                          variant="gradient"
+                          className="font-bold text-lg w-16 relative overflow-hidden"
+                          onClick={handleAddClick}
+                        >
+                          <span className="flex items-center">
+                            {isAddingExercise ? <TbMinus /> : <TbPlus />}
+                          </span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <ValidationErrors errors={exerciseErrors} />
+
+                    {isAddingExercise && (
+                      <div className="flex flex-col w-full justify-center">
+                        <div className="flex w-[22rem] space-x-2">
+                          <Input
+                            type="text"
+                            color="orange"
+                            label="Exercise to Add"
+                            value={exerciseToAdd}
+                            onChange={e => handleChange(e, undefined, 'toAdd')}
+                          />
+
+                          <Button
+                            color="orange"
+                            variant="gradient"
+                            className="font-bold text-lg w-16 relative overflow-hidden"
+                            onClick={handleAddSubmitClick}
+                          >
+                            <span className="flex w-full items-center justify-center">
+                              <TbCheck />
+                            </span>
+                          </Button>
+                        </div>
+
+                        <ValidationErrors errors={exerciseToAddErrors} />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="w-[22rem]">
+                      <Input
+                        type="number"
+                        color="orange"
+                        label="Number of Sets"
+                        value={numberOfSets}
+                        disabled={isAddingExercise}
+                        onChange={e => handleChange(e, undefined, 'nos')}
+                      />
+                    </div>
+
+                    <ValidationErrors errors={nosErrors} />
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="w-[22rem]">
+                      <Select
+                        color="orange"
+                        label="Select Rest Time Goal (Sound Alert)"
+                        value={restGoal}
+                        disabled={isAddingExercise}
+                        onChange={val =>
+                          handleChange(undefined, val, 'restGoal')
+                        }
+                      >
+                        <Option value={'30s'}>30 seconds</Option>
+                        <Option value={'45s'}>45 seconds</Option>
+                        <Option value={'60s'}>1 minute</Option>
+                        <Option value={'75s'}>1 minute 15s</Option>
+                        <Option value={'90s'}>1 minute 30s</Option>
+                        <Option value={'120s'}>2 minutes</Option>
+                        <Option value={'150s'}>2 minutes 30s</Option>
+                        <Option value={'180s'}>3 minutes</Option>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div
+                    className={clsx(
+                      'flex flex-col items-center justify-center space-y-2',
+                      { 'text-gray-400': isAddingExercise },
+                    )}
+                  >
+                    <p className="w-[22rem]">
+                      <IoMdInformationCircleOutline className="inline-block mb-1 mr-1" />
+                      One button. Press it to start a set, press it again to end
+                      a set and start rest time. Finally, press it whenever to
+                      start the next set. Continue until completion.
+                    </p>
+
+                    <p className="w-[22rem]">
+                      <TbAnalyze className="inline-block mb-1 mr-1" />
+                      Your set and rest times will be recorded, so you can
+                      compare against previous exercises.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-col items-center justify-center">
+                    <span className="text-xl italic font-semibold">
+                      {timerState.buttonText === 'End Rest and Start Set'
+                        ? 'Resting'
+                        : 'Exercising'}
+                    </span>
+                    <span className="font-semibold">
+                      Set {timerState.set}/{numberOfSets}: {timerState.timer}s
+                    </span>
+                  </div>
+                </>
+              )}
+
+              <Button
+                color="orange"
+                variant="gradient"
+                className="font-bold text-lg w-[22rem]"
+                disabled={isAddingExercise}
+                onClick={handleClick}
+              >
+                {timerState.buttonText}
+              </Button>
             </>
           )}
-
-          <Button
-            color="orange"
-            variant="gradient"
-            className="font-bold text-lg w-[22rem]"
-            disabled={isAddingExercise}
-            onClick={handleClick}
-          >
-            {timerState.buttonText}
-          </Button>
         </div>
       </div>
     </section>

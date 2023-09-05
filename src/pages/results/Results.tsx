@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+// External
+import { useEffect, useState, useContext } from 'react'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
+import { Button } from '@material-tailwind/react'
 import { z } from 'zod'
+
+// Internal
+import { AuthContext } from '../../utils/Auth'
 
 const Set = z.object({
   Id: z.number(),
@@ -25,8 +30,10 @@ type SR = z.infer<typeof SR>
 type Exercise = z.infer<typeof Exercise>
 
 export default function Results() {
+  const { currentUser } = useContext(AuthContext)
   const { setRecordId } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const exerciseId = new URLSearchParams(location.search).get('exerciseId')
 
   // ---------
@@ -39,36 +46,53 @@ export default function Results() {
   // - Lifecycle -
   // -------------
   useEffect(() => {
-    if (setRecordId) {
-      fetch(import.meta.env.VITE_DB_URL + '/SetRecord/byExercise/' + exerciseId)
-        .then(res => {
-          if (res.ok) {
-            return res.json()
-          }
-        })
-        .then(data => {
-          setSetRecords(data)
-        })
-        .catch(e => {
-          console.error(e)
-        })
-    }
+    if (currentUser) {
+      if (setRecordId) {
+        fetch(
+          import.meta.env.VITE_DB_URL + '/SetRecord/byExercise/' + exerciseId,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${currentUser.accessToken}`,
+            },
+          },
+        )
+          .then(res => {
+            if (res.ok) {
+              return res.json()
+            }
+          })
+          .then(data => {
+            setSetRecords(data)
+          })
+          .catch(e => {
+            console.error(e)
+          })
+      }
 
-    if (exerciseId) {
-      fetch(import.meta.env.VITE_DB_URL + '/Exercise/' + exerciseId)
-        .then(res => {
-          if (res.ok) {
-            return res.json()
-          }
+      if (exerciseId) {
+        fetch(import.meta.env.VITE_DB_URL + '/Exercise/' + exerciseId, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentUser.accessToken}`,
+          },
         })
-        .then(data => {
-          setExercise(data)
-        })
-        .catch(e => {
-          console.error(e)
-        })
+          .then(res => {
+            if (res.ok) {
+              return res.json()
+            }
+          })
+          .then(data => {
+            setExercise(data)
+          })
+          .catch(e => {
+            console.error(e)
+          })
+      }
     }
-  }, [])
+  }, [currentUser])
 
   return (
     <section className="flex flex-col justify-center items-center grow w-full">
@@ -98,6 +122,15 @@ export default function Results() {
               ))}
             </div>
           ))}
+
+          <Button
+            color="orange"
+            variant="gradient"
+            className="font-bold text-lg w-[22rem]"
+            onClick={() => navigate('/')}
+          >
+            Perform Another Set
+          </Button>
         </div>
       </div>
     </section>
