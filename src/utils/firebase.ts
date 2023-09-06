@@ -2,18 +2,15 @@ import { initializeApp } from 'firebase/app'
 import { GoogleAuthProvider, getAuth } from 'firebase/auth'
 import { getAnalytics } from 'firebase/analytics'
 
-// TODO: env variables
 const firebaseConfig = {
-  apiKey: 'AIzaSyBtAJvFejF4nhyPPgzX8eUh9Eq8Wn0qSQE',
-  authDomain: 'simple-et.firebaseapp.com',
-  projectId: 'simple-et',
-  storageBucket: 'simple-et.appspot.com',
-  messagingSenderId: '371842689762',
-  appId: '1:371842689762:web:728566fc4261e388384cbb',
-  measurementId: 'G-41CNPY2L3C',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGE_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 }
-
-// https://www.googleapis.com/service_accounts/v1/jwk/firebase-adminsdk-7rs0n@simple-et.iam.gserviceaccount.com
 
 const provider = new GoogleAuthProvider()
 

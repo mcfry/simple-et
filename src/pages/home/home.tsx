@@ -1,9 +1,17 @@
 // External
 import { useNavigate } from 'react-router-dom'
 import { useState, useRef, useEffect, useContext } from 'react'
-import { Input, Select, Option, Button } from '@material-tailwind/react'
+import {
+  Input,
+  Select,
+  Option,
+  Button,
+  Progress,
+  Chip,
+} from '@material-tailwind/react'
 import { IoMdInformationCircleOutline } from 'react-icons/io'
-import { TbAnalyze, TbCheck, TbPlus, TbMinus } from 'react-icons/tb'
+import { TbSettings, TbAnalyze, TbCheck, TbPlus, TbMinus } from 'react-icons/tb'
+import { GiWeightLiftingUp, GiPush } from 'react-icons/gi'
 import clsx from 'clsx'
 import { z } from 'zod'
 
@@ -21,6 +29,8 @@ const Exercise = z.object({
 })
 const ExerciseToAdd = z.string().min(4)
 const Nos = z.union([z.nan(), z.number().gte(1).lte(30)])
+const Nor = z.union([z.nan(), z.number().gte(1).lte(300)])
+const Weight = z.union([z.nan(), z.number().gte(0).lte(1000)])
 
 // Schema
 const TimerState = z.object({
@@ -33,11 +43,16 @@ const TimerState = z.object({
     'End Set and Start Rest',
     'End Rest and Start Set',
     'End Last Set',
+    'Finish Entering Info',
   ]),
+  numberOfRepsPerSet: z.array(z.number()),
+  weightPerSet: z.array(z.number()),
 })
 type Exercise = z.infer<typeof Exercise>
 type ExerciseToAdd = z.infer<typeof ExerciseToAdd>
 type Nos = z.infer<typeof Nos>
+type Nor = z.infer<typeof Nor>
+type Weight = z.infer<typeof Weight>
 type TimerState = z.infer<typeof TimerState>
 
 function Home() {
@@ -49,16 +64,23 @@ function Home() {
   // ---------
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [exercise, setExercise] = useState<Exercise | null>(null)
-  const [numberOfSets, setNumberOfSets] = useState<Nos | ''>(1) // allow empty string so user can backspace
+  // allow empty string so user can backspace
+  const [numberOfSets, setNumberOfSets] = useState<Nos | ''>(1)
+  const [numberOfReps, setNumberOfReps] = useState<Nor | ''>(1)
+  const [weight, setWeight] = useState<Weight | ''>(0)
   const [restGoal, setRestGoal] = useState<string>('90s')
   const [exerciseErrors, setExerciseErrors] = useState<string[]>([''])
   const [nosErrors, setNosErrors] = useState<string[]>([''])
+  const [norErrors, setNorErrors] = useState<string[]>([''])
+  const [weightErrors, setWeightErrors] = useState<string[]>([''])
   const [timerState, setTimerState] = useState<TimerState>({
     set: 1,
     buttonText: 'Start First Set',
     timer: 0,
     setDurations: [],
     restDurations: [],
+    numberOfRepsPerSet: [],
+    weightPerSet: [],
   })
 
   const [isAddingExercise, setIsAddingExercise] = useState<boolean>(false)
@@ -72,7 +94,31 @@ function Home() {
   let audioRef = useRef<HTMLAudioElement>(null)
 
   const isExerciseStarted = (): boolean => {
-    return timerState.buttonText === 'Start First Set'
+    return timerState.buttonText !== 'Start First Set'
+  }
+
+  const isUserResting = (): boolean => {
+    return timerState.buttonText === 'End Rest and Start Set'
+  }
+
+  const isUserRestingOrDone = (): boolean => {
+    return (
+      timerState.buttonText === 'End Rest and Start Set' ||
+      timerState.buttonText === 'Finish Entering Info'
+    )
+  }
+
+  const isUserDone = (): boolean => {
+    return timerState.buttonText === 'Finish Entering Info'
+  }
+
+  const restGoalToInt = (): number => {
+    return parseInt(
+      restGoal
+        .split('')
+        .splice(0, restGoal.length - 1)
+        .join(''),
+    )
   }
 
   const checkAndSetNos = (val: number) => {
@@ -89,12 +135,37 @@ function Home() {
     }
   }
 
+  const parseNorErrors = (
+    norResults: z.SafeParseReturnType<number, number>,
+  ) => {
+    if (!norResults.success) {
+      const errors = norResults.error.format()
+      setNorErrors(errors._errors)
+    } else if (numberOfReps == '' || isNaN(numberOfReps)) {
+      setNorErrors(['Input must be a number'])
+    } else {
+      setNorErrors([''])
+    }
+  }
+
+  const parseWeightErrors = (
+    weightResults: z.SafeParseReturnType<number, number>,
+  ) => {
+    if (!weightResults.success) {
+      const errors = weightResults.error.format()
+      setWeightErrors(errors._errors)
+    } else if (weight == '' || isNaN(weight)) {
+      setWeightErrors(['Input must be a number'])
+    } else {
+      setWeightErrors([''])
+    }
+  }
+
   const createSetRecordFromState = () => {
     const sets = []
     if (numberOfSets !== '') {
       for (let i = 0; i < numberOfSets; i += 1) {
-        let time =
-          i === numberOfSets - 1 ? timerState.timer : timerState.setDurations[i]
+        let time = timerState.setDurations[i]
         let timeAfter =
           i < timerState.restDurations.length ? timerState.restDurations[i] : 0
 
@@ -131,10 +202,13 @@ function Home() {
       timer: 0,
       setDurations: [],
       restDurations: [],
+      numberOfRepsPerSet: [],
+      weightPerSet: [],
     }))
     setIsAddingExercise(_ => false)
     setExerciseToAdd(_ => '')
     setExerciseToAddErrors(_ => [''])
+    if (secondsInterval.current) clearInterval(secondsInterval.current)
   }
 
   // -------------
@@ -174,10 +248,12 @@ function Home() {
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement> | undefined,
     manualValue: string | undefined,
-    type: 'nos' | 'exercise' | 'toAdd' | 'restGoal',
+    type: 'nos' | 'exercise' | 'toAdd' | 'restGoal' | 'nor' | 'weight',
   ) => {
-    if (type === 'nos' && e) {
-      const val = parseInt(e.currentTarget.value)
+    let val
+    if (e) val = parseInt(e.currentTarget.value)
+
+    if (type === 'nos' && val) {
       checkAndSetNos(val)
     } else if (type === 'exercise' && manualValue) {
       setExercise(findExerciseByName(manualValue))
@@ -185,6 +261,10 @@ function Home() {
       setRestGoal(manualValue)
     } else if (type === 'toAdd' && e) {
       setExerciseToAdd(e.currentTarget.value)
+    } else if (type === 'nor' && val) {
+      setNumberOfReps(val)
+    } else if (type === 'weight' && val) {
+      setWeight(val)
     }
   }
 
@@ -213,75 +293,102 @@ function Home() {
     if (secondsInterval.current) clearInterval(secondsInterval.current)
     if (!currentUser) return
 
-    const exerciseResults = Exercise.safeParse(exercise)
-    const nosResults = Nos.safeParse(numberOfSets)
-    if (nosResults.success && exerciseResults.success) {
-      const newTimerState = { ...timerState }
+    const newTimerState = { ...timerState }
 
-      if (timerState.buttonText === 'Start First Set') {
-        newTimerState.buttonText = 'End Set and Start Rest'
-      } else if (timerState.buttonText === 'End Set and Start Rest') {
-        newTimerState.setDurations.push(timerState.timer)
-        newTimerState.timer = 0
-
-        newTimerState.buttonText = 'End Rest and Start Set'
-      } else if (timerState.buttonText === 'End Rest and Start Set') {
-        newTimerState.restDurations.push(timerState.timer)
-        newTimerState.set = timerState.set + 1
-        newTimerState.timer = 0
-
-        if (newTimerState.set === numberOfSets) {
+    if (timerState.buttonText === 'Start First Set') {
+      const exerciseResults = Exercise.safeParse(exercise)
+      const nosResults = Nos.safeParse(numberOfSets)
+      if (nosResults.success && exerciseResults.success) {
+        if (numberOfSets === 1) {
           newTimerState.buttonText = 'End Last Set'
         } else {
           newTimerState.buttonText = 'End Set and Start Rest'
         }
-      } else if (timerState.buttonText === 'End Last Set') {
-        const SetRecord = createSetRecordFromState()
+      } else {
+        if (!exerciseResults.success) {
+          const errors = exerciseResults.error.format()
+          setExerciseErrors(errors._errors)
+        }
 
-        fetch(import.meta.env.VITE_DB_URL + '/SetRecord', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${currentUser.accessToken}`,
-          },
-          body: JSON.stringify(SetRecord),
+        if (!nosResults.success) {
+          const errors = nosResults.error.format()
+          setNosErrors(errors._errors)
+        }
+      }
+    } else if (timerState.buttonText === 'End Set and Start Rest') {
+      newTimerState.setDurations.push(timerState.timer)
+      newTimerState.timer = 0
+
+      newTimerState.buttonText = 'End Rest and Start Set'
+    } else if (
+      timerState.buttonText === 'End Rest and Start Set' ||
+      timerState.buttonText === 'End Last Set'
+    ) {
+      const norResults = Nor.safeParse(numberOfReps)
+      const weightResults = Weight.safeParse(weight)
+      if (!norResults.success || !weightResults.success) {
+        parseNorErrors(norResults)
+        parseWeightErrors(weightResults)
+      } else {
+        if (timerState.buttonText === 'End Rest and Start Set') {
+          newTimerState.restDurations.push(timerState.timer)
+        } else {
+          newTimerState.setDurations.push(timerState.timer)
+        }
+
+        newTimerState.numberOfRepsPerSet.push(numberOfReps || 1)
+        newTimerState.weightPerSet.push(weight || 0)
+        newTimerState.timer = 0
+
+        if (newTimerState.buttonText === 'End Rest and Start Set') {
+          newTimerState.set = timerState.set + 1
+        }
+
+        if (newTimerState.set === numberOfSets) {
+          if (newTimerState.buttonText === 'End Rest and Start Set') {
+            newTimerState.buttonText = 'End Last Set'
+          } else {
+            newTimerState.buttonText = 'Finish Entering Info'
+          }
+        } else {
+          newTimerState.buttonText = 'End Set and Start Rest'
+        }
+      }
+    } else if (timerState.buttonText === 'Finish Entering Info') {
+      const SetRecord = createSetRecordFromState()
+
+      fetch(import.meta.env.VITE_DB_URL + '/SetRecord', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentUser.accessToken}`,
+        },
+        body: JSON.stringify(SetRecord),
+      })
+        .then(res => {
+          if (res.ok) {
+            return res.json()
+          } else {
+            throw Error('Response not ok.')
+          }
         })
-          .then(res => {
-            if (res.ok) {
-              return res.json()
-            } else {
-              throw Error('Response not ok.')
-            }
-          })
-          .then(data => {
-            if (data) {
-              navigate(`/results/${data?.Id}?exerciseId=${data.ExerciseId}`)
-            }
-          })
-          .catch(e => {
-            console.error(e)
-          })
-      }
-
-      setNosErrors([''])
-      setExerciseErrors([''])
-      setTimerState(_ => ({
-        ...newTimerState,
-      }))
-
-      // Start timer for current set
-      secondsInterval.current = createSecondsTimer()
-    } else {
-      if (!exerciseResults.success) {
-        const errors = exerciseResults.error.format()
-        setExerciseErrors(errors._errors)
-      }
-
-      if (!nosResults.success) {
-        const errors = nosResults.error.format()
-        setNosErrors(errors._errors)
-      }
+        .then(data => {
+          if (data) {
+            navigate(`/results/${data?.Id}?exerciseId=${data.ExerciseId}`)
+          }
+        })
+        .catch(e => {
+          console.error(e)
+        })
     }
+
+    setTimerState(_ => ({
+      ...newTimerState,
+    }))
+
+    // Start timer for current set, unless finished
+    if (newTimerState.buttonText !== 'Finish Entering Info')
+      secondsInterval.current = createSecondsTimer()
   }
 
   const handleAddClick = () => {
@@ -343,11 +450,29 @@ function Home() {
             </span>
           ) : (
             <>
+              {isExerciseStarted() && (
+                <div className="flex justify-between items-center w-full italic font-medium">
+                  <span>Set {timerState.set}</span>
+                  <span>
+                    {timerState.set}/{numberOfSets}
+                  </span>
+                </div>
+              )}
               <span className="w-full text-center text-4xl font-bold">
-                {isExerciseStarted() ? 'Settings' : exercise?.Name}
+                {!isExerciseStarted() ? (
+                  <>
+                    <TbSettings />
+                    Settings
+                  </>
+                ) : (
+                  <span className="flex items-center justify-center space-x-3">
+                    <GiPush className="h-14 w-14" />
+                    <span>{exercise?.Name}</span>
+                  </span>
+                )}
               </span>
 
-              {isExerciseStarted() ? (
+              {!isExerciseStarted() ? (
                 <>
                   <div className="flex flex-col items-center justify-center space-y-2">
                     <div className="flex w-full justify-center">
@@ -472,15 +597,60 @@ function Home() {
                 </>
               ) : (
                 <>
-                  <div className="flex flex-col items-center justify-center">
-                    <span className="text-xl italic font-semibold">
-                      {timerState.buttonText === 'End Rest and Start Set'
-                        ? 'Resting'
-                        : 'Exercising'}
-                    </span>
-                    <span className="font-semibold">
-                      Set {timerState.set}/{numberOfSets}: {timerState.timer}s
-                    </span>
+                  <div className="flex flex-col items-center justify-center space-y-8">
+                    <div className="flex flex-col items-center justify-center">
+                      {!isUserDone() && (
+                        <>
+                          <span className="text-xl italic font-semibold">
+                            {isUserResting() ? 'Resting' : 'Exercising'}
+                          </span>
+                          <span className="font-semibold">
+                            <Chip
+                              variant="gradient"
+                              value={`${timerState.timer} seconds`}
+                            />
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {isUserRestingOrDone() && (
+                      <>
+                        <span className="font-semibold">How'd you do?</span>
+                        <div className="flex flex-col items-center justify-center">
+                          <Input
+                            type="number"
+                            color="orange"
+                            label="Number of Reps"
+                            value={numberOfReps}
+                            onChange={e => handleChange(e, undefined, 'nor')}
+                          />
+
+                          <ValidationErrors errors={norErrors} />
+                        </div>
+
+                        <div className="flex flex-col items-center justify-center">
+                          <Input
+                            type="number"
+                            color="orange"
+                            label="Weight"
+                            value={weight}
+                            onChange={e => handleChange(e, undefined, 'weight')}
+                          />
+
+                          <ValidationErrors errors={weightErrors} />
+                        </div>
+
+                        {!isUserDone() && (
+                          <div className="w-full animate-pulse">
+                            <Progress
+                              color={'orange'}
+                              value={(timerState.timer / restGoalToInt()) * 100}
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </>
               )}
@@ -488,11 +658,13 @@ function Home() {
               <Button
                 color="orange"
                 variant="gradient"
-                className="font-bold text-lg w-[22rem]"
+                className="flex justify-center items-center space-x-4 font-bold text-sm w-[22rem]"
                 disabled={isAddingExercise}
                 onClick={handleClick}
               >
-                {timerState.buttonText}
+                {!isExerciseStarted() && <GiWeightLiftingUp />}
+                <span>{timerState.buttonText}</span>
+                {!isExerciseStarted() && <GiWeightLiftingUp />}
               </Button>
             </>
           )}
