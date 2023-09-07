@@ -30,8 +30,6 @@ export default function Nav() {
       })
   }
 
-  console.log(userData)
-
   return (
     <div className="flex flex-col w-full">
       <nav className="flex flex-row justify-center items-center w-full space-x-10 sticky p-4">

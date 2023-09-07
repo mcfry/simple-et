@@ -20,14 +20,10 @@ import { AuthContext } from '../../utils/Auth'
 import ValidationErrors from '../../components/ValidationErrors'
 import simpleNotification from '../../../public/simple-notification.mp3'
 
+// Types
+import { Exercise, ExerciseName } from '../../types'
+
 // Validations
-const Exercise = z.object({
-  Id: z.number(),
-  Name: z.string().min(4),
-  SetRecords: z.array(z.any()),
-  UserExercises: z.array(z.any()),
-})
-const ExerciseToAdd = z.string().min(4)
 const Nos = z.union([z.nan(), z.number().gte(1).lte(30)])
 const Nor = z.union([z.nan(), z.number().gte(1).lte(300)])
 const Weight = z.union([z.nan(), z.number().gte(0).lte(1000)])
@@ -48,8 +44,6 @@ const TimerState = z.object({
   numberOfRepsPerSet: z.array(z.number()),
   weightPerSet: z.array(z.number()),
 })
-type Exercise = z.infer<typeof Exercise>
-type ExerciseToAdd = z.infer<typeof ExerciseToAdd>
 type Nos = z.infer<typeof Nos>
 type Nor = z.infer<typeof Nor>
 type Weight = z.infer<typeof Weight>
@@ -84,7 +78,7 @@ function Home() {
   })
 
   const [isAddingExercise, setIsAddingExercise] = useState<boolean>(false)
-  const [exerciseToAdd, setExerciseToAdd] = useState<ExerciseToAdd>('')
+  const [exerciseToAdd, setExerciseToAdd] = useState<ExerciseName>('')
   const [exerciseToAddErrors, setExerciseToAddErrors] = useState<string[]>([''])
 
   // --------
@@ -218,7 +212,6 @@ function Home() {
     if (currentUser) {
       resetState()
 
-      console.log(currentUser)
       fetch(import.meta.env.VITE_DB_URL + '/Exercise', {
         method: 'GET',
         headers: {
@@ -398,7 +391,7 @@ function Home() {
   const handleAddSubmitClick = () => {
     if (!currentUser) return
 
-    const exerciseResults = ExerciseToAdd.safeParse(exerciseToAdd)
+    const exerciseResults = ExerciseName.safeParse(exerciseToAdd)
     if (!exerciseResults.success) {
       const errors = exerciseResults.error.format()
       setExerciseToAddErrors(errors._errors)
@@ -437,38 +430,38 @@ function Home() {
   }
 
   return (
-    <section className="flex flex-col justify-center items-center grow w-full">
+    <main className="flex flex-col justify-center items-center grow w-full">
       <audio ref={audioRef}>
         <source src={simpleNotification} type="audio/mp3" />
       </audio>
 
-      <div className="card w-[30rem] bg-white text-black shadow-xl p-8 pb-10 rounded-md">
+      <section className="card w-[30rem] bg-white text-black shadow-xl p-8 pb-10 rounded-md">
         <div className="flex flex-col items-center space-y-8">
           {!currentUser ? (
-            <span className="w-full text-center text-2xl font-bold">
+            <h1 className="w-full text-center text-2xl font-bold">
               Must login to get started
-            </span>
+            </h1>
           ) : (
             <>
               {isExerciseStarted() && (
-                <div className="flex justify-between items-center w-full italic font-medium">
+                <h1 className="flex justify-between items-center w-full italic font-medium">
                   <span>Set {timerState.set}</span>
                   <span>
                     {timerState.set}/{numberOfSets}
                   </span>
-                </div>
+                </h1>
               )}
               <span className="w-full text-center text-4xl font-bold">
                 {!isExerciseStarted() ? (
-                  <>
+                  <h1>
                     <TbSettings />
                     Settings
-                  </>
+                  </h1>
                 ) : (
-                  <span className="flex items-center justify-center space-x-3">
+                  <h2 className="flex items-center justify-center space-x-3">
                     <GiPush className="h-14 w-14" />
                     <span>{exercise?.Name}</span>
-                  </span>
+                  </h2>
                 )}
               </span>
 
@@ -669,8 +662,8 @@ function Home() {
             </>
           )}
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
   )
 }
 
